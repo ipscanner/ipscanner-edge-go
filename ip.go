@@ -140,6 +140,14 @@ func (g *Guard) ClientIP(r *http.Request) string {
 	return clientIP(r, g.s.trusted, g.s.ipHeaders)
 }
 
+// TrustedPeer reports whether the peer (RemoteAddr) of r is a trusted proxy,
+// so headers it sets, such as X-Forwarded-Uri in a forward auth request, can
+// be believed.
+func (g *Guard) TrustedPeer(r *http.Request) bool {
+	remote := remoteIP(r)
+	return remote != "" && inRanges(remote, g.s.trusted)
+}
+
 func clientIP(r *http.Request, trusted []ipRange, headers []string) string {
 	remote := remoteIP(r)
 	if remote == "" || len(trusted) == 0 || !inRanges(remote, trusted) {

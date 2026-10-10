@@ -178,3 +178,22 @@ func TestCheckNormalizesIP(t *testing.T) {
 		t.Fatalf("%+v", d)
 	}
 }
+
+func TestTrustedPeer(t *testing.T) {
+	g, err := New(Config{TrustedProxies: []string{"private"}, Logger: func(string) {}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest("GET", "/", nil)
+	for remote, want := range map[string]bool{"10.1.2.3:80": true, "[::1]:80": true, "84.1.1.1:80": false, "bogus": false} {
+		r.RemoteAddr = remote
+		if got := g.TrustedPeer(r); got != want {
+			t.Fatalf("%s: got %v", remote, got)
+		}
+	}
+	none, _ := New(Config{Logger: func(string) {}})
+	r.RemoteAddr = "10.1.2.3:80"
+	if none.TrustedPeer(r) {
+		t.Fatal("no trusted proxies configured")
+	}
+}

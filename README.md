@@ -37,7 +37,7 @@ func (m *Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-`Handle` strips incoming `X-IPScanner-*` headers, resolves the client IP, checks it, adds the verdict headers to the request for the upstream and writes the block page when needed. For a forward auth endpoint use the parts: `ClientIP`, `CheckVisitor`, `Decision.Headers`, `WriteBlocked`.
+`Handle` strips incoming `X-IPScanner-*` headers, resolves the client IP, checks it, adds the verdict headers to the request for the upstream and writes the block page when needed. For a forward auth endpoint use the parts: `ClientIP`, `TrustedPeer` (whether to believe `X-Forwarded-Uri` and friends), `CheckVisitor`, `Decision.Headers`, `WriteBlocked`.
 
 ## How it works
 
