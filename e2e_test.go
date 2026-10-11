@@ -1,12 +1,6 @@
 //go:build e2e
 
-// End to end tests against a running IPScanner API. See test/e2e/run.sh.
-//
-//	IPSCANNER_API_URL   API base URL (default http://localhost:3050)
-//	IPSCANNER_KEY_FILE  file holding the API key (or IPSCANNER_API_KEY)
-//	IPSCANNER_E2E_SITE_HELPER  node script that upserts a site and lists
-//	                    request_log rows; site scenarios are skipped without it
-//	IPSCANNER_E2E_SITE  site id (default site_edgegoe2e00000000001)
+// End to end tests against a running API; run them with test/e2e/run.sh.
 package edge_test
 
 import (
@@ -114,8 +108,7 @@ func rows(t *testing.T, n int) []logRow {
 
 var warmOnce sync.Once
 
-// warm makes one check with a long timeout, so a cold API (new connections
-// to its database) does not turn the first scenario into a fail open.
+// warm keeps a cold API from failing the first scenario open.
 func warm(t *testing.T) {
 	warmOnce.Do(func() {
 		g := guard(t, edge.Config{SiteID: e2eSite(), Timeout: 10 * time.Second})
@@ -164,7 +157,6 @@ func TestE2ESiteEnforce(t *testing.T) {
 	g := guard(t, edge.Config{SiteID: e2eSite(), PolicyTTL: 2 * time.Second, Debug: true})
 	warm(t)
 
-	// Residential visitor: allowed, headers for the upstream.
 	r := request(e2eResidential, "", uniqueUA(e2eChrome))
 	w := httptest.NewRecorder()
 	d, next := g.Handle(w, r)
@@ -176,7 +168,6 @@ func TestE2ESiteEnforce(t *testing.T) {
 	}
 	t.Logf("residential: class=%s outcome=%s network=%s", d.Class, d.Outcome, r.Header.Get("X-IPScanner-Network-Class"))
 
-	// Tor: 403.
 	r = request(e2eTor, "", uniqueUA(e2eChrome))
 	w = httptest.NewRecorder()
 	d, next = g.Handle(w, r)
@@ -184,7 +175,6 @@ func TestE2ESiteEnforce(t *testing.T) {
 		t.Fatalf("tor: %+v code=%d", d, w.Code)
 	}
 
-	// VPN: flagged, passes with the flag header.
 	r = request(e2eVPN, "", uniqueUA(e2eChrome))
 	w = httptest.NewRecorder()
 	d, next = g.Handle(w, r)
@@ -192,7 +182,6 @@ func TestE2ESiteEnforce(t *testing.T) {
 		t.Fatalf("vpn: %+v", d)
 	}
 
-	// Verified crawler passes whatever the policy.
 	setSite(t, "enforce", map[string]string{"tor": "block", "vpn": "flag", "hosting": "block", "verified_bot": "block"})
 	time.Sleep(2100 * time.Millisecond)
 	r = request(e2eGooglebotIP, "", e2eGooglebot)
@@ -237,9 +226,7 @@ func TestE2EPolicyChange(t *testing.T) {
 // The API writes request_log in batches, usually within 5 seconds.
 const flushWait = 30 * time.Second
 
-// newerThan keeps this site's rows logged after since. created_at is the
-// API's clock, which is this machine's for a local API. Other clients of a
-// shared test API may log rows with the same source, so the site filters.
+// newerThan filters by site because other clients of a shared test API log the same source.
 func newerThan(t *testing.T, list []logRow, since time.Time) []logRow {
 	var out []logRow
 	for _, r := range list {
@@ -257,7 +244,6 @@ func newerThan(t *testing.T, list []logRow, since time.Time) []logRow {
 	return out
 }
 
-// waitRows polls request_log until n rows newer than since are there.
 func waitRows(t *testing.T, since time.Time, n int) []logRow {
 	var fresh []logRow
 	for deadline := time.Now().Add(flushWait); time.Now().Before(deadline); time.Sleep(time.Second) {
@@ -283,8 +269,7 @@ func TestE2ECacheHitAndRequestLog(t *testing.T) {
 	if second.Status != "ok" || !second.Cached || second.Class != first.Class {
 		t.Fatalf("second: %+v", second)
 	}
-	// A marker check after the cached one: the log is written in order, so
-	// once the marker is there a call made by the cached check would be too.
+	// The log is ordered, so once the marker lands any call by the cached check would have too.
 	marker := g.Check(context.Background(), request(e2eVPN, "", uniqueUA(e2eChrome)), e2eVPN)
 	if marker.Status != "ok" || marker.Class != "vpn" {
 		t.Fatalf("marker: %+v", marker)
@@ -327,7 +312,6 @@ func TestE2ENoSiteConfig(t *testing.T) {
 		t.Fatalf("monitor: %+v", d)
 	}
 
-	// The network class counts: a headless browser on a VPN is blocked with vpn listed.
 	g = guard(t, edge.Config{Mode: "enforce", BlockClasses: []string{"vpn"}})
 	d := g.CheckVisitor(context.Background(), edge.Visitor{IP: e2eVPN, UserAgent: uniqueUA(e2eHeadless), Method: "GET", Path: "/"})
 	if !d.Blocked() || d.Verdict == nil || d.Verdict.Network == nil || d.Verdict.Network.NetworkClass != "vpn" {
@@ -340,14 +324,12 @@ func TestE2ESpoofedForwardedFor(t *testing.T) {
 	setSite(t, "enforce", map[string]string{"tor": "block"})
 	g := guard(t, edge.Config{SiteID: e2eSite(), TrustedProxies: []string{"private"}})
 
-	// An internet peer claiming to forward for a Tor exit: its own address counts.
 	r := request(e2eResidential, e2eTor, uniqueUA(e2eChrome))
 	w := httptest.NewRecorder()
 	d, next := g.Handle(w, r)
 	if !next || d.IP != e2eResidential || d.Blocked() {
 		t.Fatalf("spoofed: %+v", d)
 	}
-	// The same header from a trusted proxy is believed.
 	r = request("127.0.0.1", e2eTor, uniqueUA(e2eChrome))
 	w = httptest.NewRecorder()
 	d, next = g.Handle(w, r)

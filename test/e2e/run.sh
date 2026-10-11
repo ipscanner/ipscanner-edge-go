@@ -1,14 +1,5 @@
 #!/bin/sh
-# End to end run against a local IPScanner API: the Go e2e tests, then the
-# Yaegi program with a real API call.
-#
-#   IPSCANNER_KEY_FILE=/path/to/key \
-#   IPSCANNER_E2E_SITE_HELPER=/path/to/site.cjs \
-#   sh test/e2e/run.sh
-#
-# IPSCANNER_API_URL defaults to http://localhost:3050. The helper is a node
-# script: `node site.cjs <site> <source_type> <mode> '<policy>'` upserts a
-# test site, `node site.cjs rows <source> [n]` prints request_log rows.
+# The helper upserts a site (`node site.cjs <site> <source_type> <mode> '<policy>'`) and prints rows (`rows <source> [n]`).
 set -eu
 root=$(cd "$(dirname "$0")/../.." && pwd)
 : "${IPSCANNER_KEY_FILE:?set IPSCANNER_KEY_FILE}"

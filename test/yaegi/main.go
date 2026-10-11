@@ -1,8 +1,4 @@
-// Command yaegi runs the package under the Yaegi interpreter, the way
-// Traefik loads plugins. Without IPSCANNER_API_URL it starts a stub API;
-// with it (and IPSCANNER_API_KEY) it calls the real one.
-//
-//	sh test/yaegi/run.sh
+// Command yaegi runs the package under Yaegi like Traefik does; without IPSCANNER_API_URL it uses a stub API.
 package main
 
 import (
@@ -65,7 +61,6 @@ func expect(name string, ok bool, detail string) {
 func main() {
 	apiURL := os.Getenv("IPSCANNER_API_URL")
 	key := strings.TrimSpace(os.Getenv("IPSCANNER_API_KEY"))
-	// A site whose policy is enforce with tor: block.
 	site := os.Getenv("IPSCANNER_SITE_ID")
 	if apiURL == "" {
 		srv := stub()
@@ -89,7 +84,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Trusted proxy on loopback forwards a Tor visitor: blocked.
 	r := httptest.NewRequest("GET", "http://example.test/", nil)
 	r.RemoteAddr = "127.0.0.1:5000"
 	r.Header.Set("X-Forwarded-For", torIP)
@@ -99,11 +93,9 @@ func main() {
 	d, next := g.Handle(w, r)
 	expect("tor blocked", !next && w.Code == 403 && d.Class == "tor", fmt.Sprintf("status=%s class=%s outcome=%s code=%d", d.Status, d.Class, d.Outcome, w.Code))
 
-	// Same visitor again: served from the cache.
 	d = g.Check(context.Background(), r, torIP)
 	expect("cache hit", d.Cached && d.Blocked(), fmt.Sprintf("cached=%t", d.Cached))
 
-	// Residential visitor passes with headers for the upstream.
 	r = httptest.NewRequest("GET", "http://example.test/page", nil)
 	r.RemoteAddr = residentialIP + ":4000"
 	r.Header.Set("User-Agent", browserUA)
@@ -112,13 +104,11 @@ func main() {
 	expect("residential allowed", next && d.Status == "ok" && r.Header.Get("X-IPScanner-Action") == "allow",
 		fmt.Sprintf("status=%s class=%s upstream=%s debug=%s", d.Status, d.Class, r.Header.Get("X-IPScanner-Class"), w.Header().Get("X-IPScanner-Status")))
 
-	// Spoofed X-Forwarded-For from an untrusted peer is ignored.
 	r = httptest.NewRequest("GET", "http://example.test/", nil)
 	r.RemoteAddr = residentialIP + ":4000"
 	r.Header.Set("X-Forwarded-For", torIP)
 	expect("spoof ignored", g.ClientIP(r) == residentialIP, g.ClientIP(r))
 
-	// Static assets are skipped.
 	r = httptest.NewRequest("GET", "http://example.test/app.css", nil)
 	r.RemoteAddr = torIP + ":4000"
 	d = g.Check(context.Background(), r, torIP)

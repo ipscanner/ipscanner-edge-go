@@ -1,7 +1,5 @@
 #!/bin/sh
-# Runs test/yaegi/main.go under Yaegi with a GOPATH layout, the way Traefik
-# loads plugins. Stub API by default; real API with
-#   IPSCANNER_API_URL=http://localhost:3050 IPSCANNER_KEY_FILE=/path/to/key sh test/yaegi/run.sh
+# Yaegi needs a GOPATH layout, like Traefik; set IPSCANNER_API_URL and IPSCANNER_KEY_FILE for the real API.
 set -eu
 root=$(cd "$(dirname "$0")/../.." && pwd)
 version=${YAEGI_VERSION:-v0.16.1}

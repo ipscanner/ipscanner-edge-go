@@ -46,14 +46,13 @@ type recorded struct {
 	body    map[string]interface{}
 }
 
-// fakeAPI is a stand in for the IPScanner API.
 type fakeAPI struct {
 	mu       sync.Mutex
 	calls    []recorded
-	verdicts map[string]string // ip -> verdict JSON
-	policy   string            // policy JSON, "" for 404
-	edgeCode int               // non zero: edge check answers with this status
-	polCode  int               // non zero: policy answers with this status
+	verdicts map[string]string
+	policy   string // policy JSON, "" for 404
+	edgeCode int
+	polCode  int
 	delay    time.Duration
 	srv      *httptest.Server
 }
@@ -318,7 +317,6 @@ func TestModeMonitorOverridesSite(t *testing.T) {
 	if d := check(g, torIP); d.Blocked() || d.Outcome != "would_block" {
 		t.Fatalf("%+v", d)
 	}
-	// Mode enforce with a site follows the dashboard.
 	f2 := newFakeAPI(t)
 	f2.policy = policyJSON("monitor", 1, map[string]string{"tor": "block"})
 	g2, _ := newGuard(t, f2, Config{SiteID: testSite, Mode: "enforce"})
@@ -359,7 +357,6 @@ func TestPolicyTTLAndStale(t *testing.T) {
 		t.Fatalf("policy change not picked up after the TTL: %+v", d)
 	}
 
-	// Refresh fails: the last policy is used and the next try waits.
 	f.set(func(f *fakeAPI) { f.polCode = 500 })
 	clk.Add(31 * time.Second)
 	before := f.count("policy")
@@ -377,7 +374,6 @@ func TestPolicyTTLAndStale(t *testing.T) {
 		t.Fatalf("no retry after the gap: %d calls", n)
 	}
 
-	// After 24 hours the stale policy is dropped.
 	clk.Add(25 * time.Hour)
 	if d := check(g, torIP); d.Blocked() || d.PolicySource != "none" {
 		t.Fatalf("policy older than 24h used: %+v", d)
@@ -391,7 +387,6 @@ func TestPolicyVersionFromVerdict(t *testing.T) {
 	check(g, homeIP)
 	f.set(func(f *fakeAPI) { f.policy = policyJSON("enforce", 2, map[string]string{"tor": "block"}) })
 	clk.Add(6 * time.Second)
-	// A new visitor's verdict carries policyVersion 2: refresh before the TTL.
 	if d := check(g, torIP); !d.Blocked() || d.PolicyVersion != 2 {
 		t.Fatalf("%+v", d)
 	}
@@ -415,7 +410,6 @@ func TestNoSiteConfig(t *testing.T) {
 		t.Fatalf("tor blocked by default: %+v", d)
 	}
 
-	// The network class counts too.
 	g, _ = newGuard(t, f, Config{Mode: "enforce", BlockClasses: []string{"vpn"}})
 	if d := check(g, "93.184.216.34"); !d.Blocked() || d.Class != "malicious_automation" {
 		t.Fatalf("network class: %+v", d)
@@ -429,7 +423,6 @@ func TestNoSiteConfig(t *testing.T) {
 		t.Fatalf("none: %+v", d)
 	}
 
-	// Verified crawlers pass whatever is blocked.
 	g, _ = newGuard(t, f, Config{Mode: "enforce", BlockClasses: []string{"hosting"}})
 	if d := check(g, botIP); d.Blocked() {
 		t.Fatalf("verified crawler blocked: %+v", d)
@@ -473,7 +466,6 @@ func TestVerdictCacheBounded(t *testing.T) {
 	if c.get("0", now) != nil || c.get("1", now) != nil || c.get("4", now) == nil {
 		t.Fatal("oldest entries not evicted")
 	}
-	// A read moves an entry to the front.
 	c.get("2", now)
 	c.set("5", &Verdict{}, now)
 	if c.get("2", now) == nil || c.get("3", now) != nil {
@@ -627,7 +619,6 @@ func TestHandle(t *testing.T) {
 	f.policy = policyJSON("enforce", 1, map[string]string{"tor": "block", "vpn": "flag"})
 	g, _ := newGuard(t, f, Config{SiteID: testSite, TrustedProxies: []string{"10.0.0.0/8"}})
 
-	// Blocked: 403 page, no debug headers without Debug.
 	r := httptest.NewRequest("GET", "http://example.test/", nil)
 	r.RemoteAddr = "10.0.0.2:1234"
 	r.Header.Set("X-Forwarded-For", torIP)
@@ -641,7 +632,6 @@ func TestHandle(t *testing.T) {
 		t.Fatalf("response headers %v", w.Header())
 	}
 
-	// Flagged: continues with the verdict headers; spoofed ones are gone.
 	r = httptest.NewRequest("GET", "http://example.test/", nil)
 	r.RemoteAddr = vpnIP + ":1234"
 	r.Header.Set("X-IPScanner-Action", "allow")
@@ -670,7 +660,6 @@ func TestHandle(t *testing.T) {
 		t.Fatal("spoofed header kept")
 	}
 
-	// Debug adds the short set to the response.
 	g, _ = newGuard(t, f, Config{SiteID: testSite, Debug: true})
 	r = httptest.NewRequest("GET", "http://example.test/", nil)
 	r.RemoteAddr = homeIP + ":1234"
