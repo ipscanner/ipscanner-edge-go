@@ -51,6 +51,7 @@ type fakeAPI struct {
 	calls    []recorded
 	verdicts map[string]string
 	policy   string // policy JSON, "" for 404
+	mode     string // top level edge check mode, "" to leave it out
 	edgeCode int
 	polCode  int
 	delay    time.Duration
@@ -80,7 +81,7 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 	_ = json.Unmarshal(raw, &body)
 	f.mu.Lock()
 	f.calls = append(f.calls, recorded{method: r.Method, path: r.URL.Path, headers: r.Header.Clone(), body: body})
-	delay, edgeCode, polCode, policy := f.delay, f.edgeCode, f.polCode, f.policy
+	delay, edgeCode, polCode, policy, mode := f.delay, f.edgeCode, f.polCode, f.policy, f.mode
 	verdict := f.verdicts[fmt.Sprint(body["ip"])]
 	f.mu.Unlock()
 	if delay > 0 {
@@ -105,6 +106,9 @@ func (f *fakeAPI) serve(w http.ResponseWriter, r *http.Request) {
 			var p map[string]interface{}
 			_ = json.Unmarshal([]byte(policy), &p)
 			verdict = strings.Replace(verdict, `"site":null`, fmt.Sprintf(`"site":{"id":%q,"mode":%q,"policyVersion":%v}`, site, p["mode"], p["version"]), 1)
+		}
+		if mode != "" {
+			verdict = fmt.Sprintf(`{"mode":%q,`, mode) + verdict[1:]
 		}
 		fmt.Fprint(w, verdict)
 	case strings.HasPrefix(r.URL.Path, "/v1/sites/") && strings.HasSuffix(r.URL.Path, "/policy"):
@@ -426,6 +430,97 @@ func TestNoSiteConfig(t *testing.T) {
 	g, _ = newGuard(t, f, Config{Mode: "enforce", BlockClasses: []string{"hosting"}})
 	if d := check(g, botIP); d.Blocked() {
 		t.Fatalf("verified crawler blocked: %+v", d)
+	}
+}
+
+func TestAccountMode(t *testing.T) {
+	cases := []struct {
+		name, mode  string
+		site, block bool
+	}{
+		{"no site, monitor", "monitor", false, false},
+		{"no site, enforce", "enforce", false, true},
+		{"no site, absent", "", false, true},
+		{"site, monitor", "monitor", true, false},
+		{"site, enforce", "enforce", true, true},
+		{"site, absent", "", true, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFakeAPI(t)
+			f.mode = c.mode
+			cfg := Config{Mode: "enforce", BlockClasses: []string{"tor"}}
+			if c.site {
+				f.policy = policyJSON("enforce", 1, map[string]string{"tor": "block"})
+				cfg = Config{SiteID: testSite}
+			}
+			g, _ := newGuard(t, f, cfg)
+			for i := 0; i < 2; i++ {
+				d := check(g, torIP)
+				if d.Status != StatusOK || d.Cached != (i == 1) {
+					t.Fatalf("check %d: %+v", i, d)
+				}
+				if c.block && (!d.Blocked() || d.Mode != ModeEnforce || d.Outcome != ActionBlock) {
+					t.Fatalf("check %d not blocked: %+v", i, d)
+				}
+				if !c.block && (d.Blocked() || d.Action != ActionAllow || d.Mode != ModeMonitor || d.Outcome != "would_block") {
+					t.Fatalf("check %d blocked on a monitor account: %+v", i, d)
+				}
+			}
+		})
+	}
+}
+
+func TestAccountModeMonitorHandle(t *testing.T) {
+	f := newFakeAPI(t)
+	f.mode = "monitor"
+	var mu sync.Mutex
+	var lines []string
+	g, _ := newGuard(t, f, Config{Mode: "enforce", BlockClasses: []string{"tor"}, Debug: true, Logger: func(line string) {
+		mu.Lock()
+		lines = append(lines, line)
+		mu.Unlock()
+	}})
+	r := httptest.NewRequest("GET", "http://example.test/", nil)
+	r.RemoteAddr = torIP + ":1234"
+	r.Header.Set("User-Agent", chrome)
+	w := httptest.NewRecorder()
+	if _, next := g.Handle(w, r); !next || w.Code != 200 {
+		t.Fatalf("blocked on a monitor account: %v %d", next, w.Code)
+	}
+	if got := r.Header.Get("X-IPScanner-Action"); got != "would_block" {
+		t.Fatalf("upstream action %q", got)
+	}
+	if got := w.Header().Get("X-IPScanner-Action"); got != "would_block" {
+		t.Fatalf("debug action %q", got)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(lines) == 0 || !strings.Contains(lines[len(lines)-1], `"decision":"would_block"`) || !strings.Contains(lines[len(lines)-1], `"mode":"monitor"`) {
+		t.Fatalf("log %v", lines)
+	}
+}
+
+func TestAccountModeCachedWithVerdict(t *testing.T) {
+	f := newFakeAPI(t)
+	f.mode = "monitor"
+	g, clk := newGuard(t, f, Config{Mode: "enforce", BlockClasses: []string{"tor"}, CacheTTL: time.Minute})
+	if d := check(g, torIP); d.Blocked() {
+		t.Fatalf("%+v", d)
+	}
+	f.set(func(f *fakeAPI) { f.mode = "enforce" })
+	if d := check(g, torIP); !d.Cached || d.Blocked() || d.Outcome != "would_block" {
+		t.Fatalf("cached verdict lost its mode: %+v", d)
+	}
+	clk.Add(61 * time.Second)
+	if d := check(g, torIP); d.Cached || !d.Blocked() {
+		t.Fatalf("new mode not picked up after the cache TTL: %+v", d)
+	}
+
+	f.set(func(f *fakeAPI) { f.mode = "monitor" })
+	clk.Add(61 * time.Second)
+	if d := check(g, torIP); d.Cached || d.Blocked() {
+		t.Fatalf("downgrade not picked up after the cache TTL: %+v", d)
 	}
 }
 
